@@ -1,0 +1,47 @@
+Cliente,Email,Tipo Polizza,Scadenza,Premio,Numero Polizza,Telefono,Note
+Mario Rossi,mario.rossi@email.com,RC Auto,19/07/2025,€ 450.00,POL001,+39 335 1234567,Cliente fedele da 5 anni
+Anna Verdi,anna.verdi@gmail.com,Casa,22/07/2025,€ 280.00,POL002,+39 340 2345678,Richiesta preventivo aggiuntivo
+Luigi Bianchi,luigi.bianchi@outlook.com,Vita,18/07/2025,€ 1200.00,POL003,+39 347 3456789,Polizza famiglia
+Elena Neri,elena.neri@libero.it,RC Auto,25/07/2025,€ 380.00,POL004,+39 338 4567890,Sconto fedeltà applicato
+Marco Gialli,marco.gialli@yahoo.com,Infortuni,10/08/2025,€ 150.00,POL005,+39 329 5678901,Polizza professionale
+Carla Blu,carla.blu@email.com,Moto,24/07/2025,€ 320.00,POL006,+39 342 6789012,Prima polizza moto
+Franco Viola,franco.viola@gmail.com,RC Auto,21/07/2025,€ 520.00,POL007,+39 345 7890123,Veicolo commerciale
+Silvia Rosa,silvia.rosa@outlook.com,Casa,26/07/2025,€ 395.00,POL008,+39 331 8901234,Appartamento centro città
+Andrea Azzurro,andrea.azzurro@libero.it,Vita,23/07/2025,€ 890.00,POL009,+39 336 9012345,Polizza temporanea
+Giulia Grigio,giulia.grigio@yahoo.com,Infortuni,20/07/2025,€ 180.00,POL010,+39 339 0123456,Dipendente pubblico
+Roberto Marrone,roberto.marrone@email.com,RC Auto,27/07/2025,€ 410.00,POL011,+39 348 1234567,Auto aziendale
+Paola Arancio,paola.arancio@gmail.com,Casa,28/07/2025,€ 315.00,POL012,+39 333 2345678,Villetta bifamiliare
+Giovanni Nero,giovanni.nero@outlook.com,Moto,19/07/2025,€ 275.00,POL013,+39 346 3456789,Moto sportiva
+Francesca Bianco,francesca.bianco@libero.it,Vita,30/07/2025,€ 1150.00,POL014,+39 349 4567890,Polizza mista
+Davide Verde,davide.verde@yahoo.com,Infortuni,29/07/2025,€ 165.00,POL015,+39 334 5678901,Lavoratore autonomo
+Simona Rosso,simona.rosso@email.com,RC Auto,31/07/2025,€ 465.00,POL016,+39 337 6789012,Neopatentata
+Michele Giallo,michele.giallo@gmail.com,Casa,01/08/2025,€ 420.00,POL017,+39 341 7890123,Condominio
+Valentina Blu,valentina.blu@outlook.com,Vita,02/08/2025,€ 980.00,POL018,+39 344 8901234,Polizza investimento
+Stefano Viola,stefano.viola@libero.it,Infortuni,03/08/2025,€ 195.00,POL019,+39 332 9012345,Attività rischiosa
+Cristina Rosa,cristina.rosa@yahoo.com,RC Auto,04/08/2025,€ 385.00,POL020,+39 343 0123456,Buon guidatore
+Alessandro Azzurro,alessandro.azzurro@email.com,Moto,05/08/2025,€ 290.00,POL021,+39 350 1234567,Scooter 125cc
+Benedetta Grigio,benedetta.grigio@gmail.com,Casa,06/08/2025,€ 355.00,POL022,+39 335 2345678,Primo piano
+Luca Marrone,luca.marrone@outlook.com,Vita,07/08/2025,€ 750.00,POL023,+39 340 3456789,Polizza giovani
+Monica Arancio,monica.arancio@libero.it,Infortuni,08/08/2025,€ 175.00,POL024,+39 347 4567890,Casalinga
+Enrico Nero,enrico.nero@yahoo.com,RC Auto,09/08/2025,€ 495.00,POL025,+39 338 5678901,Auto di lusso
+Daniela Bianco,daniela.bianco@email.com,Casa,11/08/2025,€ 375.00,POL026,+39 329 6789012,Attico
+Matteo Verde,matteo.verde@gmail.com,Moto,12/08/2025,€ 310.00,POL027,+39 342 7890123,Moto touring
+Chiara Rosso,chiara.rosso@outlook.com,Vita,13/08/2025,€ 1050.00,POL028,+39 345 8901234,Polizza famiglia numerosa
+Fabio Giallo,fabio.giallo@libero.it,Infortuni,14/08/2025,€ 160.00,POL029,+39 331 9012345,Pensionato
+Sara Blu,sara.blu@yahoo.com,RC Auto,15/08/2025,€ 420.00,POL030,+39 336 0123456,Utilitaria economica
+Alberto Fumo,alberto.fumo@email.com,Casa,16/08/2025,€ 405.00,POL031,+39 335 1111222,Inquilino stabile
+Lidia Grano,lidia.grano@gmail.com,Vita,17/08/2025,€ 860.00,POL032,+39 340 2222333,Polizza singola
+Tommaso Lago,tommaso.lago@outlook.com,RC Auto,18/08/2025,€ 470.00,POL033,+39 347 3333444,Guida sportiva
+Martina Sole,martina.sole@libero.it,Infortuni,19/08/2025,€ 185.00,POL034,+39 338 4444555,Freelance
+Riccardo Monte,riccardo.monte@yahoo.com,Moto,20/08/2025,€ 295.00,POL035,+39 329 5555666,Harley-Davidson
+Laura Valle,laura.valle@email.com,Casa,21/08/2025,€ 390.00,POL036,+39 342 6666777,Appartamento in affitto
+Gianni Fiume,gianni.fiume@gmail.com,Vita,22/08/2025,€ 930.00,POL037,+39 345 7777888,Assicurazione decennale
+Beatrice Neve,beatrice.neve@outlook.com,RC Auto,23/08/2025,€ 440.00,POL038,+39 331 8888999,Auto d’epoca
+Pietro Bosco,pietro.bosco@libero.it,Infortuni,24/08/2025,€ 210.00,POL039,+39 336 9999000,Lavoro manuale
+Angela Mare,angela.mare@yahoo.com,Moto,25/08/2025,€ 330.00,POL040,+39 341 0000111,Nuova patente
+Emanuele Cielo,emanuele.cielo@email.com,Casa,26/08/2025,€ 370.00,POL041,+39 344 1111222,Appartamento nuovo
+Irene Fuoco,irene.fuoco@gmail.com,Vita,27/08/2025,€ 1120.00,POL042,+39 332 2222333,Famiglia numerosa
+Federico Bosco,federico.bosco@outlook.com,RC Auto,28/08/2025,€ 455.00,POL043,+39 343 3333444,SUV familiare
+Veronica Sabbia,veronica.sabbia@libero.it,Infortuni,29/08/2025,€ 170.00,POL044,+39 350 4444555,Sportiva dilettante
+Maurizio Sale,maurizio.sale@yahoo.com,Moto,30/08/2025,€ 315.00,POL045,+39 335 5555666,Secondo veicolo
+Claudia Brina,claudia.brina@email.com,Casa,31/08/2025,€ 385.00,POL046,+39 340 6666777,In ristrutturazione
