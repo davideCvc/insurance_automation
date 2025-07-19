@@ -1,13 +1,13 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file
 from werkzeug.utils import secure_filename
+from flask_moment import Moment # Importa Flask-Moment
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import time, logging, threading, os, io
+import time, logging, threading, os, io, hashlib, sqlite3
 from datetime import datetime, timedelta
 import re
-import uuid
 import json
 
 app = Flask(__name__)
@@ -15,28 +15,193 @@ app.secret_key = 'cambia-questa-chiave-in-produzione'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
+moment = Moment(app) # Inizializza Flask-Moment
+
+# Configurazione logging
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs('data', exist_ok=True)  # Per i database
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[logging.FileHandler('insurance_app.log'), logging.StreamHandler()])
 
-# Storage "in-memory" per demo (in produzione usa DB)
+# Database per tracking persistente
+DB_PATH = 'data/insurance_tracking.db'
+
+# Storage session temporanei
 session_data = {
-    'df': None,
-    'target_df': None,
-    'email_col': None,
-    'name_col': None,
-    'scadenza_col': None,
-    'polizza_col': None,
     'campaign_running': False,
     'campaign_logs': [],
     'campaign_progress': 0,
     'campaign_status': 'Pronto',
-    'total_policies': 0,
-    'target_count': 0,
-    'sent_emails': {},  # {email: {date: datetime, type: '30d'|'7d'|'2d', status: 'sent'}}
-    'email_tracking': []  # Lista cronologica degli invii
+    'last_csv_info': None,
+    'current_campaign_id': None
 }
+
+class InsuranceTracker:
+    """Gestisce il tracking persistente con hash per evitare duplicati"""
+    
+    def __init__(self, db_path=DB_PATH):
+        self.db_path = db_path
+        self.salt = "insurance_salt_2024"  # Salt fisso per consistency
+        self.init_database()
+    
+    def init_database(self):
+        """Inizializza database SQLite"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Tabella per tracking email inviate
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sent_emails (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fingerprint TEXT NOT NULL,
+                    reminder_type TEXT NOT NULL,
+                    sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    campaign_id TEXT,
+                    success BOOLEAN DEFAULT 1,
+                    UNIQUE(fingerprint, reminder_type)
+                )
+            ''')
+            
+            # Tabella per stato campagne
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS campaign_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    campaign_id TEXT UNIQUE,
+                    csv_name TEXT,
+                    last_row_processed INTEGER DEFAULT 0,
+                    total_rows INTEGER DEFAULT 0,
+                    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed BOOLEAN DEFAULT 0
+                )
+            ''')
+            
+            # Indici per performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_fingerprint ON sent_emails(fingerprint)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_campaign ON sent_emails(campaign_id)')
+            
+            conn.commit()
+    
+    def create_fingerprint(self, email, polizza_id, scadenza_date):
+        """Crea hash irreversibile per identificare univocamente una riga"""
+        # Combina email + polizza_id + scadenza con salt
+        unique_string = f"{email}|{polizza_id}|{scadenza_date.strftime('%Y-%m-%d')}|{self.salt}"
+        return hashlib.sha256(unique_string.encode()).hexdigest()
+    
+    def should_send(self, email, polizza_id, scadenza_date, reminder_type):
+        """Controlla se questo reminder è già stato inviato"""
+        fingerprint = self.create_fingerprint(email, polizza_id, scadenza_date)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM sent_emails 
+                WHERE fingerprint = ? AND reminder_type = ?
+            ''', (fingerprint, reminder_type))
+            
+            count = cursor.fetchone()[0]
+            return count == 0
+    
+    def mark_sent(self, email, polizza_id, scadenza_date, reminder_type, campaign_id, success=True):
+        """Marca email come inviata"""
+        fingerprint = self.create_fingerprint(email, polizza_id, scadenza_date)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute('''
+                    INSERT INTO sent_emails (fingerprint, reminder_type, campaign_id, success)
+                    VALUES (?, ?, ?, ?)
+                ''', (fingerprint, reminder_type, campaign_id, success))
+                conn.commit()
+                logging.info(f"Marcato come inviato: {reminder_type} per fingerprint {fingerprint[:8]}...")
+            except sqlite3.IntegrityError:
+                # Già esistente, ignora
+                logging.warning(f"Tentativo di ri-inserire {reminder_type} per fingerprint {fingerprint[:8]}...")
+    
+    def get_campaign_stats(self, campaign_id=None):
+        """Statistiche campagna"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            if campaign_id:
+                cursor.execute('''
+                    SELECT reminder_type, COUNT(*) as count, 
+                           SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+                    FROM sent_emails 
+                    WHERE campaign_id = ?
+                    GROUP BY reminder_type
+                ''', (campaign_id,))
+            else:
+                cursor.execute('''
+                    SELECT reminder_type, COUNT(*) as count, 
+                           SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+                    FROM sent_emails 
+                    GROUP BY reminder_type
+                ''')
+            
+            stats = {}
+            for row in cursor.fetchall():
+                stats[row[0]] = {'total': row[1], 'successful': row[2]}
+            
+            return stats
+    
+    def save_campaign_state(self, campaign_id, csv_name, last_row, total_rows):
+        """Salva stato campagna per resume"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO campaign_state 
+                (campaign_id, csv_name, last_row_processed, total_rows)
+                VALUES (?, ?, ?, ?)
+            ''', (campaign_id, csv_name, last_row, total_rows))
+            conn.commit()
+    
+    def get_campaign_state(self, campaign_id):
+        """Recupera stato campagna"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT last_row_processed, total_rows, completed
+                FROM campaign_state WHERE campaign_id = ?
+            ''', (campaign_id,))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'last_row': result[0],
+                    'total_rows': result[1],
+                    'completed': result[2]
+                }
+            return None
+    
+    def get_campaigns_history(self, limit=10):
+        """Ottieni storico campagne con nomi CSV reali"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT campaign_id, csv_name, total_rows, last_row_processed, 
+                       created_date, completed,
+                       (SELECT COUNT(*) FROM sent_emails WHERE campaign_id = cs.campaign_id) as emails_sent
+                FROM campaign_state cs
+                ORDER BY created_date DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            campaigns = []
+            for row in cursor.fetchall():
+                campaigns.append({
+                    'campaign_id': row[0],
+                    'csv_name': row[1],
+                    'total_rows': row[2],
+                    'processed_rows': row[3],
+                    'created_date': row[4],
+                    'completed': row[5],
+                    'emails_sent': row[6],
+                    'progress': round((row[3] / row[2] * 100), 1) if row[2] > 0 else 0
+                })
+            
+            return campaigns
 
 class InsuranceReminderBot:
     def __init__(self, smtp_server, smtp_port, email, password):
@@ -44,19 +209,20 @@ class InsuranceReminderBot:
         self.smtp_port = smtp_port
         self.sender_email = email
         self.password = password
-        self.agency_name = "Agenzia Assicurativa"  # Configurabile
-        self.agency_phone = "+39 123 456 7890"  # Configurabile
-        self.agency_email = "info@agenzia.it"  # Configurabile
-
+        self.agency_name = "Agenzia Assicurativa"
+        self.agency_phone = "+39 123 456 7890"
+        self.agency_email = "info@agenzia.it"
+        self.tracker = InsuranceTracker()
+    
     def validate_email(self, email):
-        """Valida formato email usando regex"""
+        """Valida formato email"""
         if not email or pd.isna(email):
             return False
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         return re.match(email_pattern, str(email).strip()) is not None
-
+    
     def parse_date(self, date_str):
-        """Converte stringhe date in datetime con formati multipli"""
+        """Converte stringhe date in datetime"""
         if pd.isna(date_str) or not date_str:
             return None
         
@@ -72,182 +238,149 @@ class InsuranceReminderBot:
             except ValueError:
                 continue
         
-        # Prova anche con pandas
         try:
             return pd.to_datetime(date_str, dayfirst=True)
         except:
             return None
-
-    def load_insurance_data(self, file_path) -> pd.DataFrame:
-        """Carica dati polizze assicurative"""
+    
+    def load_and_process_csv(self, file_path):
+        """Carica CSV e identifica colonne automaticamente"""
         if not os.path.exists(file_path):
             raise FileNotFoundError("CSV non trovato.")
         
-        size = os.path.getsize(file_path)
-        if size == 0:
-            raise Exception("Il file CSV è vuoto.")
-        if size > 50 * 1024 * 1024:
-            raise Exception("Il file CSV supera i 50MB.")
-
-        encs = ['utf-8', 'cp1252', 'latin1', 'iso-8859-1']
-        for enc in encs:
+        # Carica CSV con encoding detection
+        encodings = ['utf-8', 'cp1252', 'latin1', 'iso-8859-1']
+        df = None
+        
+        for enc in encodings:
             try:
-                separators = [';', ',', '\t']
-                for sep in separators:
+                for sep in [';', ',', '\t']:
                     try:
                         df = pd.read_csv(file_path, encoding=enc, sep=sep, on_bad_lines='skip')
                         if not df.empty and df.shape[1] > 2:
                             df.columns = [str(col).strip() for col in df.columns]
-                            logging.info(f"CSV caricato: {enc}, sep='{sep}'")
-                            return df
-                    except Exception as e:
+                            break
+                    except Exception:
                         continue
-            except Exception as e:
-                logging.warning(f"Errore encoding {enc}: {e}")
+                if df is not None:
+                    break
+            except Exception:
                 continue
         
-        raise Exception("Impossibile caricare il CSV. Controlla formato e codifica.")
-
+        if df is None:
+            raise Exception("Impossibile caricare il CSV")
+        
+        # Identifica colonne automaticamente
+        columns = self.identify_columns(df)
+        
+        if not columns['email_col'] or not columns['scadenza_col']:
+            raise Exception("Colonne email o scadenza non identificate")
+        
+        # Processa le polizze
+        processed_df = self.process_insurance_data(df, columns)
+        
+        return processed_df, columns
+    
     def identify_columns(self, df):
-        """Identifica automaticamente le colonne principali"""
+        """Identifica automaticamente le colonne"""
         df_lower = df.copy()
         df_lower.columns = [col.lower().strip() for col in df_lower.columns]
         column_mapping = dict(zip(df_lower.columns, df.columns))
         
-        # Trova colonna EMAIL
+        # Email
         email_col = None
-        email_candidates = []
         for col in df_lower.columns:
-            if 'email' in col or 'mail' in col or 'e-mail' in col:
-                # Verifica quante email valide ci sono
+            if any(keyword in col for keyword in ['email', 'mail', 'e-mail']):
                 valid_emails = df_lower[col].apply(self.validate_email).sum()
                 if valid_emails > 0:
-                    email_candidates.append((col, valid_emails))
+                    email_col = col
+                    break
         
-        if email_candidates:
-            email_candidates.sort(key=lambda x: x[1], reverse=True)
-            email_col = email_candidates[0][0]
-        
-        # Trova colonna NOME/CLIENTE
+        # Nome
         name_col = None
-        name_keywords = ['nome', 'client', 'intestatario', 'contraente', 'assicurato', 'titolare']
         for col in df_lower.columns:
-            if any(keyword in col for keyword in name_keywords):
+            if any(keyword in col for keyword in ['nome', 'client', 'intestatario', 'contraente']):
                 if 'email' not in col:
                     name_col = col
                     break
         
-        # Trova colonna SCADENZA
+        # Scadenza
         scadenza_col = None
-        scadenza_keywords = ['scadenza', 'scade', 'expir', 'fine', 'termine', 'data']
         for col in df_lower.columns:
-            if any(keyword in col for keyword in scadenza_keywords):
-                # Verifica se contiene date valide
-                sample_dates = df_lower[col].dropna().head(10)
-                valid_dates = sum(1 for date_str in sample_dates if self.parse_date(date_str) is not None)
-                if valid_dates > 0:
+            if any(keyword in col for keyword in ['scadenza', 'scade', 'expir', 'fine']):
+                sample_dates = df_lower[col].dropna().head(5)
+                if any(self.parse_date(date_str) for date_str in sample_dates):
                     scadenza_col = col
                     break
         
-        # Trova colonna POLIZZA/TIPO
+        # Polizza
         polizza_col = None
-        polizza_keywords = ['polizza', 'tipo', 'prodotto', 'contratto', 'policy', 'assicurazione']
         for col in df_lower.columns:
-            if any(keyword in col for keyword in polizza_keywords):
+            if any(keyword in col for keyword in ['polizza', 'tipo', 'prodotto', 'policy']):
                 polizza_col = col
                 break
         
-        # Converti nomi colonne originali
+        # ID Polizza (importante per fingerprint)
+        id_col = None
+        for col in df_lower.columns:
+            if any(keyword in col for keyword in ['id', 'numero', 'codice', 'policy']):
+                id_col = col
+                break
+        
         return {
-            'email_col': column_mapping.get(email_col) if email_col else None,
-            'name_col': column_mapping.get(name_col) if name_col else None,
-            'scadenza_col': column_mapping.get(scadenza_col) if scadenza_col else None,
-            'polizza_col': column_mapping.get(polizza_col) if polizza_col else None
+            'email_col': column_mapping.get(email_col),
+            'name_col': column_mapping.get(name_col),
+            'scadenza_col': column_mapping.get(scadenza_col),
+            'polizza_col': column_mapping.get(polizza_col),
+            'id_col': column_mapping.get(id_col)
         }
-
-    def filter_expiring_policies(self, df, email_col, name_col, scadenza_col, polizza_col=None):
-        """Filtra polizze in scadenza nei prossimi 30 giorni"""
-        if not email_col or not scadenza_col:
-            raise Exception("Mancano colonne essenziali (email o scadenza)")
+    
+    def process_insurance_data(self, df, columns):
+        """Processa i dati assicurativi e calcola scadenze"""
+        processed_df = df.copy()
         
-        # Converti date di scadenza
-        df['scadenza_parsed'] = df[scadenza_col].apply(self.parse_date)
+        # Parsing date
+        processed_df['scadenza_parsed'] = processed_df[columns['scadenza_col']].apply(self.parse_date)
         
-        # Filtra solo righe con date valide
-        df_valid = df[df['scadenza_parsed'].notna()].copy()
-        
-        # Filtra solo email valide
-        df_valid = df_valid[df_valid[email_col].apply(self.validate_email)].copy()
+        # Filtra righe valide
+        processed_df = processed_df[
+            processed_df['scadenza_parsed'].notna() & 
+            processed_df[columns['email_col']].apply(self.validate_email)
+        ].copy()
         
         # Calcola giorni alla scadenza
         today = datetime.now()
-        df_valid['giorni_scadenza'] = (df_valid['scadenza_parsed'] - today).dt.days
+        processed_df['giorni_scadenza'] = (processed_df['scadenza_parsed'] - today).dt.days
         
-        # Filtra polizze in scadenza tra 0 e 30 giorni
-        target_df = df_valid[
-            (df_valid['giorni_scadenza'] >= 0) & 
-            (df_valid['giorni_scadenza'] <= 30)
-        ].copy()
-        
-        # Determina tipo di reminder necessario
-        target_df['reminder_type'] = target_df['giorni_scadenza'].apply(
+        # Determina tipo reminder
+        processed_df['reminder_type'] = processed_df['giorni_scadenza'].apply(
             lambda days: '2d' if days <= 2 else ('7d' if days <= 7 else '30d')
         )
         
-        # Aggiungi ID univoci
-        target_df['policy_id'] = [str(uuid.uuid4()) for _ in range(len(target_df))]
+        # Crea ID polizza se mancante
+        if not columns['id_col']:
+            processed_df['generated_id'] = processed_df.index.astype(str) + "_" + processed_df[columns['email_col']].astype(str)
+            columns['id_col'] = 'generated_id'
         
-        # Ordina per scadenza più vicina
-        target_df = target_df.sort_values('giorni_scadenza')
+        # Filtra solo scadenze nei prossimi 30 giorni
+        processed_df = processed_df[
+            (processed_df['giorni_scadenza'] >= 0) & 
+            (processed_df['giorni_scadenza'] <= 30)
+        ].copy()
         
-        logging.info(f"Polizze in scadenza trovate: {len(target_df)}")
-        logging.info(f"   - Scadenza 0-2 giorni: {len(target_df[target_df['reminder_type'] == '2d'])}")
-        logging.info(f"   - Scadenza 3-7 giorni: {len(target_df[target_df['reminder_type'] == '7d'])}")
-        logging.info(f"   - Scadenza 8-30 giorni: {len(target_df[target_df['reminder_type'] == '30d'])}")
-        
-        return target_df
-
-    def was_recently_sent(self, email, reminder_type):
-        """Controlla se è stata già inviata email di questo tipo recentemente"""
-        if email not in session_data['sent_emails']:
-            return False
-        
-        sent_data = session_data['sent_emails'][email]
-        
-        # Controlla se è stata inviata email dello stesso tipo negli ultimi giorni
-        last_sent = sent_data.get('last_sent', {})
-        if reminder_type in last_sent:
-            last_date = last_sent[reminder_type]
-            days_since = (datetime.now() - last_date).days
-            
-            # Non reinviare se:
-            # - 30d reminder già inviato negli ultimi 5 giorni
-            # - 7d reminder già inviato negli ultimi 2 giorni  
-            # - 2d reminder già inviato oggi
-            thresholds = {'30d': 5, '7d': 2, '2d': 0}
-            return days_since <= thresholds[reminder_type]
-        
-        return False
-
-    def create_reminder_email(self, name, email, scadenza_date, polizza_type, reminder_type):
-        """Crea contenuto email personalizzato per tipo di reminder"""
-        # Pulisci nome
+        return processed_df
+    
+    def create_reminder_email(self, name, polizza_type, scadenza_date, reminder_type):
+        """Crea contenuto email personalizzato"""
         if not name or pd.isna(name):
             name = "Gentile Cliente"
-        else:
-            name = str(name).strip()
         
-        # Pulisci tipo polizza
         if not polizza_type or pd.isna(polizza_type):
             polizza_type = "polizza assicurativa"
-        else:
-            polizza_type = str(polizza_type).strip()
         
-        # Formatta data
         scadenza_str = scadenza_date.strftime('%d/%m/%Y')
         giorni_mancanti = (scadenza_date - datetime.now()).days
         
-        # Template basato su urgenza
         templates = {
             '30d': {
                 'subject': f"Rinnovo {polizza_type} - Scadenza {scadenza_str}",
@@ -255,393 +388,282 @@ class InsuranceReminderBot:
 
 La informiamo che la sua {polizza_type} scadrà il {scadenza_str} (tra {giorni_mancanti} giorni).
 
-Per evitare interruzioni nella copertura assicurativa, la invitiamo a contattarci per procedere con il rinnovo.
-
-I nostri uffici sono a sua disposizione per:
-• Verifica delle condizioni attuali
-• Valutazione di nuove opzioni
-• Preventivi personalizzati
+Per evitare interruzioni nella copertura, la invitiamo a contattarci per il rinnovo.
 
 Contatti:
 📧 {self.agency_email}
 📞 {self.agency_phone}
 
 Cordiali saluti,
-{self.agency_name}
-
----
-Questa è una comunicazione automatica. Se ha già provveduto al rinnovo, può ignorare questo messaggio."""
+{self.agency_name}"""
             },
             '7d': {
                 'subject': f"⚠️ PROMEMORIA: {polizza_type} scade tra 7 giorni",
                 'body': f"""Gentile {name},
 
-PROMEMORIA IMPORTANTE: La sua {polizza_type} scadrà il {scadenza_str} (tra {giorni_mancanti} giorni).
+PROMEMORIA: La sua {polizza_type} scadrà il {scadenza_str} (tra {giorni_mancanti} giorni).
 
-Per garantire la continuità della copertura assicurativa, è necessario procedere SUBITO con il rinnovo.
-
-🔥 AZIONE RICHIESTA:
-• Contattaci entro i prossimi 3 giorni
-• Evita interruzioni nella copertura
-• Mantieni la tua protezione attiva
-
-Contatti URGENTI:
+Contattaci SUBITO per il rinnovo:
 📧 {self.agency_email}
 📞 {self.agency_phone}
 
-Il nostro team ti assisterà rapidamente.
-
 Cordiali saluti,
-{self.agency_name}
-
----
-Messaggio automatico - Se hai già rinnovato, ignora questa comunicazione."""
+{self.agency_name}"""
             },
             '2d': {
                 'subject': f"🚨 URGENTE: {polizza_type} scade tra 2 giorni!",
                 'body': f"""Gentile {name},
 
-🚨 ATTENZIONE: La sua {polizza_type} scadrà il {scadenza_str} (tra {giorni_mancanti} giorni)!
+🚨 URGENTE: La sua {polizza_type} scadrà il {scadenza_str} (tra {giorni_mancanti} giorni)!
 
-⚠️ AZIONE IMMEDIATA RICHIESTA:
-• Contattaci OGGI stesso
-• Evita la sospensione della copertura
-• Proteggi te e la tua famiglia
-
-🔥 CONTATTA SUBITO:
+Contattaci OGGI:
 📧 {self.agency_email}
 📞 {self.agency_phone}
 
-Il nostro team ti aspetta per il rinnovo immediato.
-
-IMPORTANTE: Dopo la scadenza, potresti rimanere scoperto fino al nuovo contratto.
-
-Cordiali saluti,
-{self.agency_name}
-
----
-Comunicazione automatica urgente - Contattaci subito se non hai ancora rinnovato."""
+{self.agency_name}"""
             }
         }
         
         template = templates.get(reminder_type, templates['30d'])
         return template['subject'], template['body']
-
+    
     def send_email(self, to_email, subject, body):
-        """Invia email con gestione errori migliorata"""
+        """Invia email"""
         try:
-            if not self.validate_email(to_email):
-                logging.error(f"Email non valida: {to_email}")
-                return False
-            
-            to_email = str(to_email).strip()
-            
-            msg = MIMEMultipart('alternative')
+            msg = MIMEMultipart()
             msg['From'] = self.sender_email
             msg['To'] = to_email
             msg['Subject'] = subject
             
-            # Aggiungi headers per tracking
-            msg['X-Campaign'] = 'Insurance-Reminder'
-            msg['X-Mailer'] = 'Insurance-Reminder-Bot'
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
             
-            text_part = MIMEText(body, 'plain', 'utf-8')
-            msg.attach(text_part)
-            
-            server = None
-            try:
-                server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-                server.set_debuglevel(0)
-                
-                if self.smtp_port in [587, 25]:
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                if self.smtp_port == 587:
                     server.starttls()
-                
                 server.login(self.sender_email, self.password)
                 server.send_message(msg)
-                
-                logging.info(f"Email inviata con successo a {to_email}")
-                return True
-                
-            except Exception as e:
-                logging.error(f"Errore SMTP per {to_email}: {e}")
-                return False
-            finally:
-                if server:
-                    try:
-                        server.quit()
-                    except:
-                        pass
-                        
+            
+            logging.info(f"Email inviata a {to_email}")
+            return True
         except Exception as e:
-            logging.error(f"Errore generale per {to_email}: {e}")
+            logging.error(f"Errore invio email a {to_email}: {e}")
             return False
-
-    def record_sent_email(self, email, reminder_type, success=True):
-        """Registra email inviata per prevenire duplicati"""
-        if email not in session_data['sent_emails']:
-            session_data['sent_emails'][email] = {
-                'last_sent': {},
-                'total_sent': 0,
-                'history': []
-            }
+    
+    def run_campaign(self, processed_df, columns, campaign_id, config, csv_filename=None):
+        """Esegue campagna con supporto per resume"""
+        delay = float(config.get('delay', 2))
+        total_rows = len(processed_df)
         
-        now = datetime.now()
-        session_data['sent_emails'][email]['last_sent'][reminder_type] = now
-        session_data['sent_emails'][email]['total_sent'] += 1
-        session_data['sent_emails'][email]['history'].append({
-            'date': now,
-            'type': reminder_type,
-            'success': success
-        })
+        # Controlla se campagna esistente
+        campaign_state = self.tracker.get_campaign_state(campaign_id)
+        start_row = campaign_state['last_row'] if campaign_state else 0
         
-        # Aggiungi al tracking globale
-        session_data['email_tracking'].append({
-            'email': email,
-            'date': now,
-            'type': reminder_type,
-            'success': success,
-            'id': str(uuid.uuid4())
-        })
-
-def run_insurance_campaign_thread(config):
-    """Esegue campagna reminder in thread separato"""
-    bot = InsuranceReminderBot(config['smtp_server'], int(config['smtp_port']),
-                               config['sender_email'], config['sender_password'])
-    
-    # Configura agenzia
-    bot.agency_name = config.get('agency_name', 'Agenzia Assicurativa')
-    bot.agency_phone = config.get('agency_phone', '+39 123 456 7890')
-    bot.agency_email = config.get('agency_email', config['sender_email'])
-    
-    if session_data['target_df'] is None or session_data['target_df'].empty:
-        session_data.update({
-            'campaign_running': False,
-            'campaign_status': 'Nessun target disponibile',
-            'campaign_progress': 100,
-        })
-        return
-    
-    df = session_data['target_df']
-    delay = float(config.get('delay', 2))
-    total, sent_success, sent_skip, sent_fail = len(df), 0, 0, 0
-    
-    session_data['campaign_logs'].append(
-        f"{datetime.now().strftime('%H:%M:%S')} - 📊 Campagna avviata per {total} polizze in scadenza"
-    )
-    
-    for i, row in df.iterrows():
-        if not session_data['campaign_running']:
-            session_data['campaign_logs'].append(
-                f"{datetime.now().strftime('%H:%M:%S')} - 📊 Campagna interrotta dall'utente"
-            )
-            break
+        # Usa il nome del CSV reale invece di "current_csv"
+        csv_name = csv_filename or "unknown_csv"
         
-        try:
-            email = row[session_data['email_col']]
-            name = row[session_data['name_col']] if session_data['name_col'] else "Gentile Cliente"
-            scadenza_date = row['scadenza_parsed']
-            polizza_type = row[session_data['polizza_col']] if session_data['polizza_col'] else "polizza"
-            reminder_type = row['reminder_type']
+        session_data['campaign_logs'].append(
+            f"{datetime.now().strftime('%H:%M:%S')} - 📊 Campagna {campaign_id} - CSV: {csv_name} - Inizio da riga {start_row}/{total_rows}"
+        )
+        
+        sent_count = 0
+        skipped_count = 0
+        error_count = 0
+        
+        for idx, row in processed_df.iloc[start_row:].iterrows():
+            if not session_data['campaign_running']:
+                break
             
-            # Controlla se già inviata recentemente
-            if bot.was_recently_sent(email, reminder_type):
-                sent_skip += 1
-                session_data['campaign_logs'].append(
-                    f"{datetime.now().strftime('%H:%M:%S')} - ⏭️ Saltata {email} (già inviata {reminder_type})"
-                )
-                continue
-            
-            # Crea e invia email
-            subject, body = bot.create_reminder_email(name, email, scadenza_date, polizza_type, reminder_type)
-            
-            if bot.send_email(email, subject, body):
-                sent_success += 1
-                bot.record_sent_email(email, reminder_type, success=True)
-                emoji = '🚨' if reminder_type == '2d' else ('⚠️' if reminder_type == '7d' else '�')
-                session_data['campaign_logs'].append(
-                    f"{datetime.now().strftime('%H:%M:%S')} - {emoji} Inviata {reminder_type} a {email}"
-                )
-            else:
-                sent_fail += 1
-                bot.record_sent_email(email, reminder_type, success=False)
-                session_data['campaign_logs'].append(
-                    f"{datetime.now().strftime('%H:%M:%S')} - ❌ Errore invio a {email}"
-                )
-            
-            # Aggiorna progresso
-            progress = round(((i + 1) / total) * 100, 1)
-            session_data.update({
-                'campaign_progress': progress,
-                'campaign_status': f"{i + 1}/{total} • {sent_success} inviate, {sent_skip} saltate, {sent_fail} errori"
-            })
-            
-            # Pausa tra invii
-            if session_data['campaign_running']:
-                time.sleep(delay)
+            try:
+                email = row[columns['email_col']]
+                name = row[columns['name_col']] if columns['name_col'] else "Gentile Cliente"
+                polizza_id = row[columns['id_col']]
+                scadenza_date = row['scadenza_parsed']
+                polizza_type = row[columns['polizza_col']] if columns['polizza_col'] else "polizza"
+                reminder_type = row['reminder_type']
                 
-        except Exception as e:
-            sent_fail += 1
-            logging.error(f"Errore riga {i}: {e}")
-            session_data['campaign_logs'].append(
-                f"{datetime.now().strftime('%H:%M:%S')} - ❌ Errore processamento riga {i}: {e}"
-            )
-    
-    # Finalizza campagna
-    session_data['campaign_running'] = False
-    final_status = f"Completata: {sent_success} inviate, {sent_skip} saltate, {sent_fail} errori"
-    session_data['campaign_status'] = final_status
-    session_data['campaign_progress'] = 100
-    session_data['campaign_logs'].append(
-        f"{datetime.now().strftime('%H:%M:%S')} - 📊 {final_status}"
-    )
+                # Controlla se già inviato
+                if not self.tracker.should_send(email, polizza_id, scadenza_date, reminder_type):
+                    skipped_count += 1
+                    session_data['campaign_logs'].append(
+                        f"{datetime.now().strftime('%H:%M:%S')} - ⏭️ Saltato {reminder_type} (già inviato)"
+                    )
+                    continue
+                
+                # Crea e invia email
+                subject, body = self.create_reminder_email(name, polizza_type, scadenza_date, reminder_type)
+                
+                if self.send_email(email, subject, body):
+                    self.tracker.mark_sent(email, polizza_id, scadenza_date, reminder_type, campaign_id, True)
+                    sent_count += 1
+                    emoji = '🚨' if reminder_type == '2d' else ('⚠️' if reminder_type == '7d' else '📧')
+                    session_data['campaign_logs'].append(
+                        f"{datetime.now().strftime('%H:%M:%S')} - {emoji} Inviato {reminder_type}"
+                    )
+                else:
+                    self.tracker.mark_sent(email, polizza_id, scadenza_date, reminder_type, campaign_id, False)
+                    error_count += 1
+                    session_data['campaign_logs'].append(
+                        f"{datetime.now().strftime('%H:%M:%S')} - ❌ Errore invio"
+                    )
+                
+                # CORREZIONE: Usa il nome CSV reale
+                current_row = start_row + idx
+                progress = round((current_row / total_rows) * 100, 1)
+                session_data['campaign_progress'] = progress
+                session_data['campaign_status'] = f"{current_row}/{total_rows} • {sent_count} inviate, {skipped_count} saltate, {error_count} errori"
+                
+                # Salva stato per resume con nome CSV corretto
+                self.tracker.save_campaign_state(campaign_id, csv_name, current_row, total_rows)
+                
+                if session_data['campaign_running']:
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                error_count += 1
+                logging.error(f"Errore processamento riga {idx}: {e}")
+        
+        # Finalizza campagna
+        session_data['campaign_running'] = False
+        session_data['campaign_status'] = f"Completata: {sent_count} inviate, {skipped_count} saltate, {error_count} errori"
+        session_data['campaign_progress'] = 100
+        
+        final_log = f"{datetime.now().strftime('%H:%M:%S')} - 📊 Campagna completata: {sent_count} inviate, {skipped_count} saltate, {error_count} errori"
+        session_data['campaign_logs'].append(final_log)
 
-def update_stats():
-    """Aggiorna contatori statistiche"""
-    session_data['total_policies'] = len(session_data['df']) if session_data['df'] is not None else 0
-    session_data['target_count'] = len(session_data['target_df']) if session_data['target_df'] is not None else 0
+# Script per pulire i dati esistenti (opzionale)
+def clean_existing_data():
+    """Script per pulire dati con csv_name = 'current_csv'"""
+    tracker = InsuranceTracker()
+    with sqlite3.connect(tracker.db_path) as conn:
+        cursor = conn.cursor()
+        
+        # Mostra campagne con "current_csv"
+        cursor.execute("SELECT * FROM campaign_state WHERE csv_name = 'current_csv'")
+        old_campaigns = cursor.fetchall()
+        print(f"Trovate {len(old_campaigns)} campagne con csv_name='current_csv'")
+        
+        # Opzione 1: Cancella completamente
+        # cursor.execute("DELETE FROM campaign_state WHERE csv_name = 'current_csv'")
+        
+        # Opzione 2: Aggiorna con nome generico ma più descrittivo
+        cursor.execute("""
+            UPDATE campaign_state 
+            SET csv_name = 'legacy_csv_' || substr(campaign_id, -8)
+            WHERE csv_name = 'current_csv'
+        """)
+        
+        conn.commit()
+        print("Dati aggiornati")
 
-# ROUTES FLASK
+# Flask Routes
 @app.route('/')
 def index():
-    update_stats()
-    return render_template('insurance_index.html', stats=session_data)
+    """Homepage con statistiche"""
+    tracker = InsuranceTracker()
+    stats = tracker.get_campaign_stats()
+    return render_template('insurance_index.html', stats=stats, session=session_data)
 
 @app.route('/upload_csv', methods=['POST'])
 def upload_csv():
+    """Upload e processamento CSV"""
+    
+    # Debug dettagliato
+    print("=== DEBUG UPLOAD CSV ===")
+    print("Method:", request.method)
+    print("Content-Type:", request.content_type)
+    print("Files ricevuti:", list(request.files.keys()))
+    print("Form data:", list(request.form.keys()))
+    
+    # Controlla se è una richiesta multipart
+    if not request.content_type or 'multipart/form-data' not in request.content_type:
+        print("Errore: Content-Type non è multipart/form-data")
+        return jsonify({'error': 'Richiesta non valida - content type errato'}), 400
+    
+    # Controlla se il campo file esiste
     if 'csv_file' not in request.files:
-        flash("Nessun file selezionato.", 'error')
-        return redirect(url_for('index'))
+        print("Errore: Campo 'csv_file' non trovato nei files")
+        print("Files disponibili:", list(request.files.keys()))
+        return jsonify({'error': 'Nessun file selezionato - campo csv_file mancante'}), 400
     
-    f = request.files['csv_file']
-    if not f.filename or not f.filename.lower().endswith('.csv'):
-        flash("Seleziona un file CSV valido.", 'error')
-        return redirect(url_for('index'))
+    file = request.files['csv_file']
+    print("File object:", file)
+    print("Filename:", file.filename)
     
-    filename = secure_filename(f.filename)
+    # Controlla se il file è stato effettivamente selezionato
+    if not file or file.filename == '':
+        print("Errore: File vuoto o nome file vuoto")
+        return jsonify({'error': 'Nessun file selezionato - file vuoto'}), 400
+    
+    if not file.filename.lower().endswith('.csv'):
+        print("Errore: File non è CSV")
+        return jsonify({'error': 'Seleziona un file CSV valido'}), 400
+    
+    # Salva file temporaneamente
+    filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    f.save(filepath)
     
     try:
-        bot = InsuranceReminderBot('', 0, '', '')
-        df = bot.load_insurance_data(filepath)
+        file.save(filepath)
+        print(f"File salvato in: {filepath}")
         
-        # Reset dati sessione
-        session_data.update({
-            'df': df,
-            'target_df': None,
-            'email_col': None,
-            'name_col': None,
-            'scadenza_col': None,
-            'polizza_col': None,
-            'campaign_status': 'CSV caricato. Analizza scadenze.',
-            'campaign_progress': 0
+        # Verifica che il file sia stato salvato
+        if not os.path.exists(filepath):
+            print("Errore: File non salvato correttamente")
+            return jsonify({'error': 'Errore nel salvataggio del file'}), 500
+        
+        # Verifica dimensione file
+        file_size = os.path.getsize(filepath)
+        print(f"Dimensione file: {file_size} bytes")
+        
+        if file_size == 0:
+            print("Errore: File vuoto")
+            return jsonify({'error': 'File CSV vuoto'}), 400
+        
+        # Processa il CSV
+        bot = InsuranceReminderBot('', 0, '', '')
+        processed_df, columns = bot.load_and_process_csv(filepath)
+        
+        print(f"CSV processato: {len(processed_df)} righe")
+        print(f"Colonne identificate: {columns}")
+        
+        # Salva info per la sessione CON IL NOME DEL FILE
+        session_data['last_csv_info'] = {
+            'filename': filename,  # Questo era già presente
+            'total_rows': len(processed_df),
+            'columns': columns,
+            'processed_df': processed_df
+        }
+        
+        return jsonify({
+            'success': True,
+            'message': f'CSV processato: {len(processed_df)} polizze in scadenza (0-30 giorni)',
+            'total_rows': len(processed_df),
+            'columns': columns,
+            'filename': filename  # Aggiungi questo per debug
         })
         
-        update_stats()
-        flash(f"CSV caricato: {len(df)} righe. Colonne: {', '.join(df.columns)}. Ora analizza le scadenze.", 'success')
-        
     except Exception as e:
-        flash(f"Errore caricamento CSV: {e}", 'error')
-        logging.error(f"Errore caricamento: {e}")
+        print(f"Errore durante il processamento: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Errore processamento CSV: {str(e)}'}), 500
     finally:
+        # Pulisci file temporaneo
         if os.path.exists(filepath):
             os.remove(filepath)
-    
-    return redirect(url_for('index'))
+            print("File temporaneo rimosso")
 
-@app.route('/analyze_expiring', methods=['POST'])
-def analyze_expiring():
-    if session_data['df'] is None:
-        flash("Prima carica un file CSV.", 'error')
-        return redirect(url_for('index'))
-    
-    try:
-        bot = InsuranceReminderBot('', 0, '', '')
-        
-        # Identifica colonne automaticamente
-        columns = bot.identify_columns(session_data['df'])
-        
-        if not columns['email_col'] or not columns['scadenza_col']:
-            missing = []
-            if not columns['email_col']:
-                missing.append('email')
-            if not columns['scadenza_col']:
-                missing.append('scadenza')
-            flash(f"Colonne mancanti: {', '.join(missing)}. Verifica il formato del CSV.", 'error')
-            return redirect(url_for('index'))
-        
-        # Filtra polizze in scadenza
-        target_df = bot.filter_expiring_policies(
-            session_data['df'].copy(),
-            columns['email_col'],
-            columns['name_col'],
-            columns['scadenza_col'],
-            columns['polizza_col']
-        )
-        
-        # Aggiorna sessione
-        session_data.update({
-            'target_df': target_df,
-            'email_col': columns['email_col'],
-            'name_col': columns['name_col'],
-            'scadenza_col': columns['scadenza_col'],
-            'polizza_col': columns['polizza_col'],
-            'campaign_status': f'Trovate {len(target_df)} polizze in scadenza (0-30 giorni)',
-            'campaign_progress': 0
-        })
-        
-        update_stats()
-        
-        # Statistiche dettagliate
-        stats_30d = len(target_df[target_df['reminder_type'] == '30d'])
-        stats_7d = len(target_df[target_df['reminder_type'] == '7d'])
-        stats_2d = len(target_df[target_df['reminder_type'] == '2d'])
-        
-        flash(f"Analisi completata: {len(target_df)} polizze in scadenza. "
-              f"30g: {stats_30d}, 7g: {stats_7d}, 2g: {stats_2d}", 'success')
-        
-    except Exception as e:
-        flash(f"Errore analisi: {e}", 'error')
-        logging.error(f"Errore analisi: {e}")
-    
-    return redirect(url_for('index'))
-
-@app.route('/create_insurance_sample')
-def create_insurance_sample():
-    """Crea CSV di esempio per polizze assicurative"""
-    today = datetime.now()
-    sample_data = {
-        'Cliente': ['Mario Rossi', 'Anna Verdi', 'Luigi Bianchi', 'Elena Neri', 'Marco Gialli'],
-        'Email': ['mario.rossi@email.com', 'anna.verdi@email.com', 'luigi.bianchi@email.com', 
-                  'elena.neri@email.com', 'marco.gialli@email.com'],
-        'Tipo Polizza': ['RC Auto', 'Casa', 'Vita', 'RC Auto', 'Infortuni'],
-        'Scadenza': [
-            (today + timedelta(days=25)).strftime('%d/%m/%Y'),
-            (today + timedelta(days=5)).strftime('%d/%m/%Y'),
-            (today + timedelta(days=1)).strftime('%d/%m/%Y'),
-            (today + timedelta(days=15)).strftime('%d/%m/%Y'),
-            (today + timedelta(days=45)).strftime('%d/%m/%Y')  # Questa non sarà inclusa (>30 giorni)
-        ],
-        'Premio': ['€ 450,00', '€ 280,00', '€ 1.200,00', '€ 380,00', '€ 150,00'],
-        'Numero Polizza': ['POL001', 'POL002', 'POL003', 'POL004', 'POL005']
-    }
-    
-    sample_df = pd.DataFrame(sample_data)
-    
-    output = io.BytesIO()
-    sample_df.to_csv(output, index=False, encoding='utf-8')
-    output.seek(0)
-    
-    return send_file(output, mimetype="text/csv",as_attachment=True, download_name="esempio_polizze_scadenze.csv")
+# Nella route /start_campaign, modifica la parte del thread:
 
 @app.route('/start_campaign', methods=['POST'])
 def start_campaign():
-    if session_data['target_df'] is None or session_data['target_df'].empty:
-        flash("Prima analizza le scadenze.", 'error')
+    """Avvia campagna email"""
+    if not session_data['last_csv_info']:
+        flash("Prima carica un CSV", 'error')
         return redirect(url_for('index'))
     
     if session_data['campaign_running']:
-        flash("Campagna già in esecuzione.", 'warning')
+        flash("Campagna già in esecuzione", 'warning')
         return redirect(url_for('index'))
     
     # Configurazione SMTP
@@ -657,8 +679,12 @@ def start_campaign():
     }
     
     if not config['sender_email'] or not config['sender_password']:
-        flash("Email e password SMTP obbligatori.", 'error')
+        flash("Email e password SMTP richiesti", 'error')
         return redirect(url_for('index'))
+    
+    # Crea ID campagna univoco
+    campaign_id = f"campaign_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    session_data['current_campaign_id'] = campaign_id
     
     # Inizializza campagna
     session_data.update({
@@ -668,137 +694,102 @@ def start_campaign():
         'campaign_logs': []
     })
     
-    # Avvia thread
-    campaign_thread = threading.Thread(target=run_insurance_campaign_thread, args=(config,))
-    campaign_thread.daemon = True
-    campaign_thread.start()
+    # Avvia thread campagna
+    def run_campaign_thread():
+        bot = InsuranceReminderBot(
+            config['smtp_server'], 
+            int(config['smtp_port']),
+            config['sender_email'], 
+            config['sender_password']
+        )
+        bot.agency_name = config['agency_name']
+        bot.agency_phone = config['agency_phone']
+        bot.agency_email = config['agency_email']
+        
+        csv_info = session_data['last_csv_info']
+        csv_filename = csv_info.get('filename', 'unknown_csv')
+        
+        bot.run_campaign(
+            csv_info['processed_df'], 
+            csv_info['columns'], 
+            campaign_id, 
+            config, 
+            csv_filename=csv_filename
+        )
     
-    flash("Campagna email avviata!", 'success')
+    thread = threading.Thread(target=run_campaign_thread)
+    thread.daemon = True
+    thread.start()
+    
+    flash("Campagna avviata con successo!", 'success')
+    
+    # CORREZIONE: Sempre redirect, mai JSON per form normali
     return redirect(url_for('index'))
+
 
 @app.route('/stop_campaign', methods=['POST'])
 def stop_campaign():
+    """Ferma campagna"""
     session_data['campaign_running'] = False
     session_data['campaign_status'] = 'Campagna interrotta'
-    flash("Campagna interrotta.", 'info')
+    flash("Campagna interrotta", 'info')
     return redirect(url_for('index'))
 
 @app.route('/campaign_status')
 def campaign_status():
-    """API per aggiornamenti in tempo reale"""
+    """API stato campagna"""
     return jsonify({
         'running': session_data['campaign_running'],
         'status': session_data['campaign_status'],
         'progress': session_data['campaign_progress'],
-        'logs': session_data['campaign_logs'][-10:],  # Ultimi 10 log
-        'total_policies': session_data['total_policies'],
-        'target_count': session_data['target_count']
+        'logs': session_data['campaign_logs'][-10:],
+        'campaign_id': session_data.get('current_campaign_id')
     })
 
-@app.route('/email_history')
-def email_history():
-    """Mostra cronologia email inviate"""
-    return render_template('email_history.html', 
-                           tracking=session_data['email_tracking'][-50:],  # Ultimi 50
-                           sent_emails=session_data['sent_emails'])
+@app.route('/stats')
+def stats():
+    """Pagina statistiche"""
+    tracker = InsuranceTracker()
+    stats = tracker.get_campaign_stats()
+    return render_template('stats.html', stats=stats)
 
-@app.route('/preview_targets')
-def preview_targets():
-    """Anteprima polizze in scadenza"""
-    if session_data['target_df'] is None:
-        flash("Prima analizza le scadenze.", 'error')
-        return redirect(url_for('index'))
+@app.route('/create_sample')
+def create_sample():
+    """Crea CSV di esempio"""
+    today = datetime.now()
+    sample_data = {
+        'Cliente': ['Mario Rossi', 'Anna Verdi', 'Luigi Bianchi', 'Elena Neri'],
+        'Email': ['mario.rossi@email.com', 'anna.verdi@email.com', 'luigi.bianchi@email.com', 'elena.neri@email.com'],
+        'Tipo_Polizza': ['RC Auto', 'Casa', 'Vita', 'RC Auto'],
+        'Scadenza': [
+            (today + timedelta(days=25)).strftime('%d/%m/%Y'),
+            (today + timedelta(days=5)).strftime('%d/%m/%Y'),
+            (today + timedelta(days=1)).strftime('%d/%m/%Y'),
+            (today + timedelta(days=15)).strftime('%d/%m/%Y')
+        ],
+        'Numero_Polizza': ['POL001', 'POL002', 'POL003', 'POL004']
+    }
     
-    # Prepara dati per visualizzazione
-    df_preview = session_data['target_df'].copy()
+    df = pd.DataFrame(sample_data)
+    output = io.BytesIO()
+    df.to_csv(output, index=False, encoding='utf-8')
+    output.seek(0)
     
-    # Seleziona colonne importanti
-    cols_to_show = []
-    if session_data['name_col']:
-        cols_to_show.append(session_data['name_col'])
-    if session_data['email_col']:
-        cols_to_show.append(session_data['email_col'])
-    if session_data['polizza_col']:
-        cols_to_show.append(session_data['polizza_col'])
-    if session_data['scadenza_col']:
-        cols_to_show.append(session_data['scadenza_col'])
-    
-    cols_to_show.extend(['giorni_scadenza', 'reminder_type'])
-    
-    df_preview = df_preview[cols_to_show]
-    
-    # Converti in HTML - Rimosse classi Bootstrap per usare solo Tailwind CSS
-    html_table = df_preview.to_html(table_id='targetsTable', 
-                                     escape=False, 
-                                     index=False)
-    
-    return render_template('preview_targets.html', 
-                           table_html=html_table, 
-                           count=len(df_preview))
+    return send_file(output, mimetype="text/csv", as_attachment=True, download_name="esempio_polizze.csv")
 
-@app.route('/reset_data', methods=['POST'])
-def reset_data():
-    """Reset completo dei dati"""
+@app.route('/reset', methods=['POST'])
+def reset():
+    """Reset dati sessione"""
     session_data.update({
-        'df': None,
-        'target_df': None,
-        'email_col': None,
-        'name_col': None,
-        'scadenza_col': None,
-        'polizza_col': None,
         'campaign_running': False,
         'campaign_logs': [],
         'campaign_progress': 0,
         'campaign_status': 'Pronto',
-        'total_policies': 0,
-        'target_count': 0,
-        'sent_emails': {},
-        'email_tracking': []
+        'last_csv_info': None,
+        'current_campaign_id': None
     })
-    
-    flash("Dati resettati con successo.", 'info')
+    flash("Dati resettati", 'info')
     return redirect(url_for('index'))
-
-@app.route('/export_targets')
-def export_targets():
-    """Esporta polizze in scadenza in CSV"""
-    if session_data['target_df'] is None:
-        flash("Prima analizza le scadenze.", 'error')
-        return redirect(url_for('index'))
-    
-    output = io.BytesIO()
-    session_data['target_df'].to_csv(output, index=False, encoding='utf-8')
-    output.seek(0)
-    
-    return send_file(output, mimetype="text/csv",
-                     as_attachment=True, 
-                     download_name=f"polizze_scadenza_{datetime.now().strftime('%Y%m%d_%H%M')}.csv")
-
-@app.route('/client_stats')
-def client_stats():
-    """Statistiche clienti e performance"""
-    stats = {
-        'total_emails_sent': len(session_data['email_tracking']),
-        'successful_sends': len([e for e in session_data['email_tracking'] if e['success']]),
-        'failed_sends': len([e for e in session_data['email_tracking'] if not e['success']]),
-        'unique_clients': len(session_data['sent_emails']),
-        'recent_activity': session_data['email_tracking'][-20:] if session_data['email_tracking'] else []
-    }
-    
-    # Raggruppa per tipo di reminder
-    reminder_stats = {}
-    for email in session_data['email_tracking']:
-        reminder_type = email['type']
-        if reminder_type not in reminder_stats:
-            reminder_stats[reminder_type] = {'sent': 0, 'success': 0}
-        reminder_stats[reminder_type]['sent'] += 1
-        if email['success']:
-            reminder_stats[reminder_type]['success'] += 1
-    
-    stats['reminder_stats'] = reminder_stats
-    
-    return render_template('client_stats.html', stats=stats)
-
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -1,315 +1,534 @@
-<!DOCTYPE html>
-<html lang="it">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bot Promemoria Assicurazioni</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Font Awesome for icons -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
-    <style>
-        /* Custom scrollbar for log container */
-        .log-container::-webkit-scrollbar {
-            width: 8px;
-        }
+{% block title %}Dashboard - Gestione Campagne Assicurative{% endblock %}
 
-        .log-container::-webkit-scrollbar-track {
-            background: #1a202c; /* Dark background */
-            border-radius: 10px;
-        }
+{% block content %}
+<div class="row mb-5">
+    <div class="col-12 text-center">
+        <h1 class="display-4">
+            <i class="fas fa-tachometer-alt text-primary-custom me-3"></i>
+            Dashboard Campagne Assicurative
+        </h1>
+        <p class="lead">
+            Monitora e gestisci le tue campagne di reminder per le polizze in scadenza.
+        </p>
+    </div>
+</div>
 
-        .log-container::-webkit-scrollbar-thumb {
-            background: #4a5568; /* Grayish thumb */
-            border-radius: 10px;
-        }
-
-        .log-container::-webkit-scrollbar-thumb:hover {
-            background: #718096; /* Lighter gray on hover */
-        }
-    </style>
-</head>
-
-<body class="bg-gray-100 font-sans antialiased">
-    <div class="container mx-auto px-4 py-8 max-w-7xl">
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-extrabold text-gray-800 mb-2">
-                <i class="fas fa-shield-alt text-indigo-600"></i> Bot Promemoria Assicurazioni
-            </h1>
-            <p class="text-gray-600 text-lg">Gestisci e automatizza i promemoria per le polizze assicurative.</p>
+<div class="row mb-5 gy-4">
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('30d', {}).get('total', 0) }}</div>
+            <div class="text-muted">Reminder 30 giorni</div>
         </div>
-
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="relative px-4 py-3 leading-normal rounded-lg mb-4
-                    {% if category == 'error' %} bg-red-100 text-red-700 {% elif category == 'warning' %} bg-yellow-100 text-yellow-700 {% else %} bg-green-100 text-green-700 {% endif %}"
-                    role="alert">
-                    <span class="absolute inset-y-0 left-0 flex items-center ml-4">
-                        {% if category == 'error' %}<i class="fas fa-times-circle"></i>
-                        {% elif category == 'warning' %}<i class="fas fa-exclamation-triangle"></i>
-                        {% else %}<i class="fas fa-check-circle"></i>{% endif %}
-                    </span>
-                    <p class="ml-8">{{ message }}</p>
-                    <span class="absolute inset-y-0 right-0 flex items-center mr-4 cursor-pointer" onclick="this.parentElement.remove()">
-                        <i class="fas fa-times"></i>
-                    </span>
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div class="bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-xl shadow-lg p-6 text-center transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-file-csv fa-3x mb-3 opacity-80"></i>
-                <h4 class="text-3xl font-bold">{{ stats.total_policies }}</h4>
-                <p class="text-sm opacity-90">Polizze Totali</p>
-            </div>
-            <div class="bg-gradient-to-br from-yellow-500 to-orange-600 text-white rounded-xl shadow-lg p-6 text-center transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-exclamation-triangle fa-3x mb-3 opacity-80"></i>
-                <h4 class="text-3xl font-bold">{{ stats.target_count }}</h4>
-                <p class="text-sm opacity-90">In Scadenza</p>
-            </div>
-            <div class="bg-gradient-to-br from-green-500 to-teal-600 text-white rounded-xl shadow-lg p-6 text-center transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-envelope fa-3x mb-3 opacity-80"></i>
-                <h4 class="text-3xl font-bold">{{ stats.sent_emails|length }}</h4>
-                <p class="text-sm opacity-90">Email Inviate</p>
-            </div>
-            <div class="bg-gradient-to-br from-blue-500 to-cyan-600 text-white rounded-xl shadow-lg p-6 text-center transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-cog fa-3x mb-3 opacity-80"></i>
-                <h4 class="text-3xl font-bold">{{ 'Attiva' if stats.campaign_running else 'Ferma' }}</h4>
-                <p class="text-sm opacity-90">Campagna</p>
-            </div>
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('7d', {}).get('total', 0) }}</div>
+            <div class="text-muted">Reminder 7 giorni</div>
         </div>
-
-        <!-- Campaign Status -->
-        <div class="bg-white rounded-xl shadow-lg p-6 mb-8 border-l-8 border-indigo-600">
-            <h5 class="text-xl font-semibold text-gray-800 mb-3">
-                <i class="fas fa-info-circle text-indigo-600 mr-2"></i> Stato Campagna: <span class="font-bold">{{ stats.campaign_status }}</span>
-            </h5>
-            {% if stats.campaign_running %}
-            <div class="w-full bg-gray-200 rounded-full h-6 mt-4">
-                <div class="bg-indigo-600 h-6 rounded-full text-center text-white text-sm font-medium flex items-center justify-center transition-all duration-500 ease-out"
-                    style="width: {{ stats.campaign_progress }}%">
-                    {{ stats.campaign_progress }}%
-                </div>
-            </div>
-            {% endif %}
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('2d', {}).get('total', 0) }}</div>
+            <div class="text-muted">Reminder 2 giorni</div>
         </div>
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">
+                {{ (stats.get('30d', {}).get('total', 0) + stats.get('7d', {}).get('total', 0) + stats.get('2d', {}).get('total', 0)) }}
+            </div>
+            <div class="text-muted">Totale Email Inviate</div>
+        </div>
+    </div>
+</div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- Upload & Analyze Data Card -->
-            <div class="lg:col-span-2 bg-white rounded-xl shadow-lg p-6">
-                <div class="border-b pb-4 mb-4 flex items-center">
-                    <h5 class="text-xl font-semibold text-gray-800"><i class="fas fa-upload text-indigo-600 mr-2"></i> Carica e Analizza Dati</h5>
-                </div>
-                <div class="card-body">
-                    <form method="POST" action="/upload_csv" enctype="multipart/form-data" class="mb-5">
-                        <label for="csv_file" class="block text-gray-700 text-sm font-bold mb-2">Carica File CSV Polizze</label>
-                        <div class="flex items-center space-x-3">
-                            <input type="file" id="csv_file" class="block w-full text-sm text-gray-500
-                                file:mr-4 file:py-2 file:px-4
-                                file:rounded-full file:border-0
-                                file:text-sm file:font-semibold
-                                file:bg-indigo-50 file:text-indigo-700
-                                hover:file:bg-indigo-100"
-                                name="csv_file" accept=".csv" required />
-                            <button class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-full shadow-md transition-colors duration-300" type="submit">
-                                <i class="fas fa-upload mr-2"></i> Carica CSV
-                            </button>
-                        </div>
-                    </form>
-
-                    <form method="POST" action="/analyze_expiring" class="mb-5">
-                        <button class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-4 rounded-full shadow-md transition-colors duration-300
-                            {% if stats.df is none or stats.df.empty %} opacity-50 cursor-not-allowed {% endif %}"
-                            type="submit" {% if stats.df is none or stats.df.empty %} disabled {% endif %}>
-                            <i class="fas fa-search mr-2"></i> Analizza Scadenze (0-30 giorni)
-                        </button>
-                    </form>
-
-                    <div class="flex flex-wrap gap-4">
-                        <a href="/preview_targets" class="flex-1 text-center bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-full shadow-md transition-colors duration-300
-                            {% if stats.target_df is none or stats.target_df.empty %} opacity-50 cursor-not-allowed {% endif %}"
-                            {% if stats.target_df is none or stats.target_df.empty %} aria-disabled="true" {% endif %}>
-                            <i class="fas fa-eye mr-2"></i> Anteprima Targets
-                        </a>
-                        <a href="/create_insurance_sample" class="flex-1 text-center bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-full shadow-md transition-colors duration-300">
-                            <i class="fas fa-download mr-2"></i> Scarica Esempio CSV
-                        </a>
+<div class="row gy-4">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-upload me-2"></i>
+                    Carica File CSV Polizze
+                </h5>
+            </div>
+            <div class="card-body d-flex flex-column">
+                <form method="POST" action="{{ url_for('upload_csv') }}" enctype="multipart/form-data" id="uploadForm" class="flex-grow-1 d-flex flex-column justify-content-between">
+                    <div class="file-upload mb-4" id="fileUploadArea">
+                        <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                        <h6>Trascina qui il file CSV o <span class="text-primary-custom">clicca per selezionare</span></h6>
+                        <input type="file" name="csv_file" accept=".csv" required id="csvFileInput">
+                        <small class="text-muted d-block mt-2">
+                            Formato richiesto: CSV con colonne Email, Nome, Scadenza, Tipo Polizza, Numero Polizza.
+                        </small>
                     </div>
-                </div>
-            </div>
-
-            <!-- Quick Actions Card -->
-            <div class="bg-white rounded-xl shadow-lg p-6">
-                <div class="border-b pb-4 mb-4 flex items-center">
-                    <h5 class="text-xl font-semibold text-gray-800"><i class="fas fa-tools text-indigo-600 mr-2"></i> Azioni Rapide</h5>
-                </div>
-                <div class="grid gap-4">
-                    <a href="/email_history" class="w-full text-center border border-indigo-500 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 font-bold py-3 px-4 rounded-full transition-all duration-300">
-                        <i class="fas fa-history mr-2"></i> Cronologia Email
-                    </a>
-                    <a href="/client_stats" class="w-full text-center border border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 font-bold py-3 px-4 rounded-full transition-all duration-300">
-                        <i class="fas fa-chart-bar mr-2"></i> Statistiche Clienti
-                    </a>
-                    <a href="/export_targets" class="w-full text-center border border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700 font-bold py-3 px-4 rounded-full transition-all duration-300
-                        {% if stats.target_df is none or stats.target_df.empty %} opacity-50 cursor-not-allowed {% endif %}"
-                        {% if stats.target_df is none or stats.target_df.empty %} aria-disabled="true" {% endif %}>
-                        <i class="fas fa-file-export mr-2"></i> Esporta Targets
-                    </a>
-                    <button class="w-full border border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold py-3 px-4 rounded-full transition-all duration-300"
-                        onclick="showResetModal()">
-                        <i class="fas fa-trash mr-2"></i> Reset Dati
+                    <button type="submit" class="btn btn-primary w-100 mt-auto" id="uploadBtn">
+                        <i class="fas fa-file-import me-2"></i>
+                        Carica e Processa CSV
                     </button>
+                </form>
+
+                {% if session.last_csv_info %}
+                <div class="alert alert-info mt-3 fade show">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>CSV Caricato:</strong> {{ session.last_csv_info.filename }}<br>
+                    <strong>Polizze analizzate:</strong> {{ session.last_csv_info.total_rows }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
+                {% endif %}
             </div>
         </div>
+    </div>
 
-        <!-- Email Configuration & Campaign Card -->
-        <div class="bg-white rounded-xl shadow-lg p-6 mt-8">
-            <div class="border-b pb-4 mb-4 flex items-center">
-                <h5 class="text-xl font-semibold text-gray-800"><i class="fas fa-rocket text-indigo-600 mr-2"></i> Configurazione Email e Campagna</h5>
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-cogs me-2"></i>
+                    Configurazione SMTP e Agenzia
+                </h5>
             </div>
-            <form method="POST" action="/start_campaign">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <h6 class="text-lg font-semibold text-gray-700 mb-3">Configurazione SMTP</h6>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Server SMTP</label>
-                            <input type="text" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="smtp_server" value="smtp.gmail.com" required />
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('start_campaign') }}" id="campaignForm">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="smtpServer" class="form-label">Server SMTP</label>
+                            <input type="text" name="smtp_server" id="smtpServer" class="form-control" value="smtp.gmail.com" required>
                         </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Porta</label>
-                            <input type="number" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="smtp_port" value="587" required />
-                        </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Email Mittente</label>
-                            <input type="email" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="sender_email" required />
-                        </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Password/App Password</label>
-                            <input type="password" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="sender_password" required />
+                        <div class="col-md-6">
+                            <label for="smtpPort" class="form-label">Porta SMTP</label>
+                            <input type="number" name="smtp_port" id="smtpPort" class="form-control" value="587" required>
                         </div>
                     </div>
-                    <div>
-                        <h6 class="text-lg font-semibold text-gray-700 mb-3">Informazioni Agenzia</h6>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Nome Agenzia</label>
-                            <input type="text" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="agency_name" value="Agenzia Assicurativa" />
-                        </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Telefono</label>
-                            <input type="text" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="agency_phone" value="+39 123 456 7890" />
-                        </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Email Agenzia</label>
-                            <input type="email" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="agency_email" />
-                        </div>
-                        <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">Ritardo tra email (secondi)</label>
-                            <input type="number" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400" name="delay" value="2" min="1" max="60" />
-                        </div>
-                    </div>
-                </div>
 
-                <div class="flex flex-wrap gap-4 mt-6">
-                    <button class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full shadow-md transition-colors duration-300
-                        {% if stats.target_df is none or stats.target_df.empty or stats.campaign_running %} opacity-50 cursor-not-allowed {% endif %}"
-                        type="submit" {% if stats.target_df is none or stats.target_df.empty or stats.campaign_running %} disabled {% endif %}>
-                        <i class="fas fa-play mr-2"></i> Avvia Campagna
+                    <div class="mb-3">
+                        <label for="senderEmail" class="form-label">Email Mittente</label>
+                        <input type="email" name="sender_email" id="senderEmail" class="form-control" placeholder="es. info@tuaagenzia.com" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="senderPassword" class="form-label">Password / App Password</label>
+                        <input type="password" name="sender_password" id="senderPassword" class="form-control" required>
+                        <small class="text-muted">Per Gmail, utilizza una "Password per app".</small>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="agencyName" class="form-label">Nome Agenzia</label>
+                            <input type="text" name="agency_name" id="agencyName" class="form-control" value="Agenzia Assicurativa Esempio">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="agencyPhone" class="form-label">Telefono Agenzia</label>
+                            <input type="text" name="agency_phone" id="agencyPhone" class="form-control" value="+39 123 456 7890">
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="agencyEmail" class="form-label">Email Supporto Agenzia</label>
+                        <input type="email" name="agency_email" id="agencyEmail" class="form-control" placeholder="es. supporto@tuaagenzia.com" required>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="delayInput" class="form-label">Ritardo tra le email (secondi)</label>
+                        <input type="number" name="delay" id="delayInput" class="form-control" value="2" min="1" max="60">
+                        <small class="text-muted">Un ritardo maggiore può aiutare a prevenire blocchi SMTP.</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-success w-100" {% if not session.last_csv_info or session.campaign_running %}disabled{% endif %}>
+                        <i class="fas fa-paper-plane me-2"></i>
+                        {% if session.campaign_running %}
+                        Campagna in Esecuzione...
+                        {% else %}
+                        Avvia Campagna di Reminder
+                        {% endif %}
                     </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 
-                    {% if stats.campaign_running %}
-                    <form method="POST" action="/stop_campaign" class="inline-block">
-                        <button class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full shadow-md transition-colors duration-300" type="submit">
-                            <i class="fas fa-stop mr-2"></i> Ferma Campagna
+<div class="row mt-5">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-chart-bar me-2"></i>
+                    Stato Attuale Campagna
+                </h5>
+                <div>
+                    {% if session.campaign_running %}
+                    <form method="POST" action="{{ url_for('stop_campaign') }}" class="d-inline me-2">
+                        <button type="submit" class="btn btn-danger btn-sm">
+                            <i class="fas fa-stop me-1"></i>
+                            Ferma
                         </button>
                     </form>
                     {% endif %}
-                </div>
-            </form>
-        </div>
-
-        <!-- Campaign Log -->
-        {% if stats.campaign_logs %}
-        <div class="bg-gray-800 text-green-400 rounded-xl shadow-lg p-6 mt-8">
-            <div class="border-b border-gray-700 pb-4 mb-4 flex items-center">
-                <h5 class="text-xl font-semibold text-white"><i class="fas fa-terminal text-green-400 mr-2"></i> Log Campagna</h5>
-            </div>
-            <div class="log-container bg-gray-900 p-4 rounded-lg h-80 overflow-y-auto text-sm leading-relaxed font-mono">
-                {% for log in stats.campaign_logs[-20:] %}
-                <div>{{ log }}</div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Reset Data Confirmation Modal -->
-    <div id="resetModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm mx-auto">
-            <div class="text-center">
-                <i class="fas fa-exclamation-circle text-red-500 text-5xl mb-4"></i>
-                <h3 class="text-xl font-semibold text-gray-800 mb-2">Conferma Reset Dati</h3>
-                <p class="text-gray-600 mb-6">Sei sicuro di voler resettare tutti i dati? Questa azione è irreversibile.</p>
-                <div class="flex justify-center gap-4">
-                    <button onclick="hideResetModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-full transition-colors duration-300">
-                        Annulla
-                    </button>
-                    <form method="POST" action="/reset_data" class="inline-block">
-                        <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full transition-colors duration-300">
-                            Reset Dati
+                    <form method="POST" action="{{ url_for('reset') }}" class="d-inline">
+                        <button type="submit" class="btn btn-warning btn-sm">
+                            <i class="fas fa-redo me-1"></i>
+                            Reset
                         </button>
                     </form>
                 </div>
             </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-4 mb-md-0">
+                        <h6 class="mb-3">Progresso Invio:</h6>
+                        <div class="progress mb-3">
+                            <div class="progress-bar" role="progressbar" style="width: {{ session.campaign_progress }}%" id="progressBar" aria-valuenow="{{ session.campaign_progress }}" aria-valuemin="0" aria-valuemax="100">
+                                {{ session.campaign_progress }}%
+                            </div>
+                        </div>
+                        <p class="mb-0 fs-5">
+                            <strong>Stato:</strong>
+                            <span id="campaignStatus" class="fw-bold text-primary-custom">{{ session.campaign_status }}</span>
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Log delle Operazioni:</h6>
+                        <div class="log-container" id="campaignLogs">
+                            {% for log in session.campaign_logs %}
+                            <div>{{ log }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
+</div>
 
-    <script>
-        function showResetModal() {
-            document.getElementById('resetModal').classList.remove('hidden');
-        }
+<div class="row mt-5 mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-tools me-2"></i>
+                    Strumenti Utili
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row gy-3">
+                    <div class="col-md-4">
+                        <a href="{{ url_for('create_sample') }}" class="btn btn-info w-100">
+                            <i class="fas fa-file-download me-2"></i>
+                            Scarica CSV Esempio
+                        </a>
+                    </div>
+                    <div class="col-md-4">
+                        <a href="{{ url_for('stats') }}" class="btn btn-primary w-100">
+                            <i class="fas fa-chart-line me-2"></i>
+                            Visualizza Statistiche Dettagliate
+                        </a>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="btn btn-secondary w-100" data-bs-toggle="modal" data-bs-target="#helpModal">
+                            <i class="fas fa-question-circle me-2"></i>
+                            Guida e Info
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
-        function hideResetModal() {
-            document.getElementById('resetModal').classList.add('hidden');
-        }
+<div class="modal fade" id="helpModal" tabindex="-1" aria-labelledby="helpModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="helpModalLabel">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Guida Rapida e Informazioni
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <h6><i class="fas fa-file-csv me-2"></i>Formato del File CSV</h6>
+                <p>Il file CSV da caricare deve essere formattato correttamente, includendo le seguenti colonne (l'ordine non è rilevante, ma i nomi delle intestazioni sì):</p>
+                <ul>
+                    <li><strong>Email:</strong> Indirizzo email del cliente (campo obbligatorio).</li>
+                    <li><strong>Nome:</strong> Nome del cliente (opzionale, utilizzato per personalizzare l'email).</li>
+                    <li><strong>Scadenza:</strong> Data di scadenza della polizza nel formato <code>gg/mm/aaaa</code> (es. <code>31/12/2025</code>).</li>
+                    <li><strong>Tipo Polizza:</strong> Descrizione del tipo di polizza (es. "Auto", "Vita", "Casa"). Campo opzionale.</li>
+                    <li><strong>Numero Polizza:</strong> Un identificativo univoco della polizza (es. "ABC12345"). Campo opzionale.</li>
+                </ul>
+                <p>È possibile scaricare un esempio di CSV tramite il pulsante "Scarica CSV Esempio".</p>
 
-        function updateCampaignStatus() {
-            fetch('/campaign_status')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.running) {
-                        const progressBar = document.querySelector('.bg-indigo-600');
-                        if (progressBar) {
-                            progressBar.style.width = data.progress + '%';
-                            progressBar.textContent = data.progress + '%';
-                        }
-                        const logContainer = document.getElementById('campaign-logs');
-                        if (logContainer && data.logs.length > 0) {
-                            logContainer.innerHTML = data.logs.map(log => `<div>${log}</div>`).join('');
-                            logContainer.scrollTop = logContainer.scrollHeight;
-                        }
-                        setTimeout(updateCampaignStatus, 2000);
-                    } else {
-                        // Reload the page after a short delay when campaign stops
-                        setTimeout(() => window.location.reload(), 3000);
+                <h6><i class="fas fa-envelope-open-text me-2"></i>Tipi di Reminder e Logica di Invio</h6>
+                <p>Il sistema invia email di reminder basandosi sulla data di scadenza della polizza:</p>
+                <ul>
+                    <li><strong>30 giorni prima:</strong> Primo reminder per avvisare con largo anticipo.</li>
+                    <li><strong>7 giorni prima:</strong> Reminder più urgente.</li>
+                    <li><strong>2 giorni prima:</strong> Ultimo reminder critico prima della scadenza.</li>
+                </ul>
+                <p>Le email vengono inviate una sola volta per ogni tipo di reminder per evitare duplicati, grazie a un sistema di "fingerprinting" basato sui dati della polizza e sul tipo di reminder.</p>
+
+                <h6><i class="fas fa-shield-alt me-2"></i>Sicurezza e Configurazione SMTP</h6>
+                <p>Per l'invio delle email, è necessario configurare i parametri del server SMTP. Se si utilizza un account Gmail, è fortemente consigliato generare una <strong>"Password per app"</strong> anziché usare la password principale dell'account, per motivi di sicurezza e compatibilità con i sistemi di automazione.</p>
+                <p>Il "Ritardo tra le email" (Delay) permette di impostare una pausa tra un invio e l'altro, utile per prevenire che il server SMTP interpreti l'attività come spam e blocchi l'invio.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-refresh stato campagna
+    function updateCampaignStatus() {
+        fetch('/campaign_status')
+            .then(response => response.json())
+            .then(data => {
+                const statusElement = document.getElementById('campaignStatus');
+                const progressBar = document.getElementById('progressBar');
+                const logsContainer = document.getElementById('campaignLogs');
+                const campaignStartBtn = document.querySelector('#campaignForm button[type="submit"]');
+                const stopCampaignBtn = document.querySelector('form[action="{{ url_for('stop_campaign') }}"] button');
+
+                if (statusElement) statusElement.textContent = data.status;
+                
+                if (progressBar) {
+                    progressBar.style.width = data.progress + '%';
+                    progressBar.setAttribute('aria-valuenow', data.progress);
+                    progressBar.textContent = data.progress + '%';
+                }
+
+                // Aggiorna i log
+                if (logsContainer) {
+                    const maxLogs = 50; 
+                    if (data.logs.length > logsContainer.children.length || JSON.stringify(Array.from(logsContainer.children).map(div => div.textContent)) !== JSON.stringify(data.logs.slice(-maxLogs))) {
+                        logsContainer.innerHTML = '';
+                        data.logs.slice(-maxLogs).forEach(log => {
+                            const logDiv = document.createElement('div');
+                            logDiv.textContent = log;
+                            logsContainer.appendChild(logDiv);
+                        });
+                        logsContainer.scrollTop = logsContainer.scrollHeight; // Scorre in basso
                     }
-                })
-                .catch(error => {
-                    console.error('Errore aggiornamento stato campagna:', error);
-                    // Continue trying to update even on error
-                    setTimeout(updateCampaignStatus, 5000);
-                });
-        }
-        {% if stats.campaign_running %}
-        updateCampaignStatus();
-        {% endif %}
-    </script>
-</body>
+                }
 
-</html>
+                // Aggiorna il pulsante della campagna
+                if (campaignStartBtn) {
+                    const hasCSV = {{ (session.last_csv_info is not none)|tojson }};
+                    if (data.running) {
+                        campaignStartBtn.disabled = true;
+                        campaignStartBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Campagna in Esecuzione...';
+                        campaignStartBtn.classList.add('btn-secondary');
+                        campaignStartBtn.classList.remove('btn-success');
+                        if (stopCampaignBtn) stopCampaignBtn.closest('form').style.display = 'inline';
+                    } else {
+                        campaignStartBtn.disabled = !hasCSV;
+                        campaignStartBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Avvia Campagna di Reminder';
+                        campaignStartBtn.classList.add('btn-success');
+                        campaignStartBtn.classList.remove('btn-secondary');
+                        if (stopCampaignBtn) stopCampaignBtn.closest('form').style.display = 'none';
+                    }
+                }
+
+                // Se la campagna è appena finita, ricarica la pagina per aggiornare le stats
+                if (!data.running && window.campaignWasRunning) {
+                    window.campaignWasRunning = false;
+                    setTimeout(() => location.reload(), 2000); 
+                }
+                
+                window.campaignWasRunning = data.running;
+            })
+            .catch(error => {
+                console.error('Errore durante l\'aggiornamento dello stato della campagna:', error);
+            });
+    }
+
+    // Inizia l'auto-refresh
+    const refreshInterval = setInterval(updateCampaignStatus, 3000); // Aggiorna ogni 3 secondi
+
+    // Ferma il refresh quando la pagina viene chiusa
+    window.addEventListener('beforeunload', () => {
+        clearInterval(refreshInterval);
+    });
+
+    // Gestione visualizzazione nome file selezionato nel drag & drop area
+    const csvFileInput = document.getElementById('csvFileInput');
+    const fileUploadArea = document.getElementById('fileUploadArea');
+
+    if (csvFileInput && fileUploadArea) {
+        // Funzione per aggiornare l'UI dell'area di upload
+        function updateFileUploadArea(fileName) {
+            if (fileName) {
+                fileUploadArea.innerHTML = `
+                    <i class="fas fa-file-csv fa-3x text-success mb-3"></i>
+                    <h6 class="text-success">${fileName}</h6>
+                    <input type="file" name="csv_file" accept=".csv" required id="csvFileInput" style="display: none;">
+                    <small class="text-muted d-block mt-2">File selezionato. Clicca "Carica e Processa CSV" per continuare.</small>
+                `;
+                // Riassegna l'event listener al nuovo input file
+                const newInput = document.getElementById('csvFileInput');
+                newInput.addEventListener('change', handleFileInputChange);
+            } else {
+                fileUploadArea.innerHTML = `
+                    <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                    <h6>Trascina qui il file CSV o <span class="text-primary-custom">clicca per selezionare</span></h6>
+                    <input type="file" name="csv_file" accept=".csv" required id="csvFileInput">
+                    <small class="text-muted d-block mt-2">
+                        Formato richiesto: CSV con colonne Email, Nome, Scadenza, Tipo Polizza, Numero Polizza.
+                    </small>
+                `;
+                const newInput = document.getElementById('csvFileInput');
+                newInput.addEventListener('change', handleFileInputChange);
+            }
+        }
+
+        // Gestore per il cambio manuale del file input
+        function handleFileInputChange(e) {
+            const fileName = e.target.files[0]?.name;
+            updateFileUploadArea(fileName);
+            // Mantiene il file selezionato anche dopo l'aggiornamento dell'HTML
+            const currentFileInput = document.getElementById('csvFileInput');
+            if (currentFileInput) {
+                currentFileInput.files = e.target.files;
+            }
+        }
+
+        // Click sull'area di upload
+        fileUploadArea.addEventListener('click', () => {
+            csvFileInput.click();
+        });
+
+        // Event listener per il cambio dell'input file (manuale)
+        csvFileInput.addEventListener('change', handleFileInputChange);
+
+        // Drag and Drop events
+        fileUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            fileUploadArea.classList.add('border-primary-custom', 'bg-light');
+        });
+
+        fileUploadArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            fileUploadArea.classList.remove('border-primary-custom', 'bg-light');
+        });
+
+        fileUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            fileUploadArea.classList.remove('border-primary-custom', 'bg-light');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.csv')) {
+                csvFileInput.files = files; // Assegna il file all'input hidden
+                updateFileUploadArea(files[0].name);
+            } else {
+                addFlashMessage('danger', 'Si prega di caricare un file CSV valido.');
+            }
+        });
+    }
+
+
+    // Gestione submit form CSV upload con Fetch API per non ricaricare la pagina subito
+    const uploadForm = document.getElementById('uploadForm');
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault(); // Previene il submit tradizionale
+
+            const formData = new FormData(this);
+            const uploadBtn = document.getElementById('uploadBtn');
+            const fileInput = this.querySelector('input[name="csv_file"]');
+
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                addFlashMessage('danger', 'Seleziona un file CSV prima di procedere.');
+                return;
+            }
+
+            // Disabilita bottone durante upload
+            if (uploadBtn) {
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Caricamento...';
+            }
+
+            fetch(this.action, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    addFlashMessage('success', data.message);
+                    // Ricarica la pagina dopo un breve delay per aggiornare le session.last_csv_info
+                    setTimeout(() => location.reload(), 1500); 
+                } else {
+                    addFlashMessage('danger', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Errore durante l\'upload del file:', error);
+                addFlashMessage('danger', 'Errore durante il caricamento del file. Riprova.');
+            })
+            .finally(() => {
+                // Riabilita bottone (verrà ripristinato dal reload comunque)
+                if (uploadBtn) {
+                    uploadBtn.disabled = false;
+                    uploadBtn.innerHTML = '<i class="fas fa-file-import me-2"></i>Carica e Processa CSV';
+                }
+            });
+        });
+    }
+
+    // Funzione per aggiungere messaggi flash dinamicamente
+    function addFlashMessage(type, message) {
+        const container = document.querySelector('.container-fluid'); 
+        if (!container) return;
+
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show mb-4`;
+        alertDiv.setAttribute('role', 'alert');
+
+        let iconClass = '';
+        if (type === 'success') iconClass = 'fa-check-circle';
+        else if (type === 'danger') iconClass = 'fa-times-circle';
+        else if (type === 'warning') iconClass = 'fa-exclamation-triangle';
+        else iconClass = 'fa-info-circle';
+
+        alertDiv.innerHTML = `
+            <i class="fas ${iconClass} me-2"></i>
+            <strong>${type === 'success' ? 'Successo!' : (type === 'danger' ? 'Errore!' : 'Attenzione!')}</strong> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        // Inserisce il nuovo alert sopra tutti gli altri alert esistenti e sotto la prima riga mb-5
+        const firstRow = document.querySelector('.row.mb-5');
+        if (firstRow) {
+            firstRow.after(alertDiv);
+        } else {
+            container.prepend(alertDiv);
+        }
+
+        // Auto-chiusura
+        setTimeout(() => {
+            const bsAlert = new bootstrap.Alert(alertDiv);
+            bsAlert.close();
+        }, 5000);
+    }
+
+
+    // Inizializza l'auto-refresh e auto-chiusura alert al caricamento della pagina
+    document.addEventListener('DOMContentLoaded', function() {
+        updateCampaignStatus(); // Prima chiamata immediata
+        
+        // Gestione dei toast/alert Bootstrap se presenti dal server-side
+        const alerts = document.querySelectorAll('.alert-dismissible');
+        alerts.forEach(alert => {
+            setTimeout(() => {
+                const bsAlert = new bootstrap.Alert(alert);
+                bsAlert.close();
+            }, 5000); 
+        });
+    });
+
+    console.log('Dashboard JavaScript caricato correttamente');
+</script>
+{% endblock %}

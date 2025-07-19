@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+
+{% block title %}Statistiche - Gestione Campagne Assicurative{% endblock %}
+
+{% block content %}
+<div class="row mb-5">
+    <div class="col-12 text-center">
+        <h1 class="display-4">
+            <i class="fas fa-chart-bar text-primary-custom me-3"></i>
+            Statistiche Campagne
+        </h1>
+        <p class="lead">
+            Analisi dettagliata delle performance delle campagne di reminder inviate.
+        </p>
+    </div>
+</div>
+
+<!-- Statistiche Generali -->
+<div class="row mb-5 gy-4">
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('30d', {}).get('total', 0) }}</div>
+            <div class="text-muted"><i class="fas fa-calendar-alt me-2"></i>Reminder 30 giorni</div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('7d', {}).get('total', 0) }}</div>
+            <div class="text-muted"><i class="fas fa-exclamation-triangle me-2"></i>Reminder 7 giorni</div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.get('2d', {}).get('total', 0) }}</div>
+            <div class="text-muted"><i class="fas fa-exclamation-circle me-2"></i>Reminder 2 giorni</div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 col-sm-12">
+        <div class="stats-card">
+            <div class="stats-number">
+                {{ (stats.get('30d', {}).get('total', 0) + stats.get('7d', {}).get('total', 0) + stats.get('2d', {}).get('total', 0)) }}
+            </div>
+            <div class="text-muted"><i class="fas fa-envelope me-2"></i>Totale Email Inviate</div>
+        </div>
+    </div>
+</div>
+
+<div class="row gy-4">
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-chart-pie me-2"></i>
+                    Dettaglio per Tipo Reminder
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if stats %}
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Tipo Reminder</th>
+                                    <th>Totale Inviate</th>
+                                    <th>Successo</th>
+                                    <th>Errori</th>
+                                    <th>Tasso Successo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for reminder_type, data in stats.items() %}
+                                <tr>
+                                    <td>
+                                        {% if reminder_type == '30d' %}
+                                            <span class="badge bg-primary">
+                                                <i class="fas fa-calendar-alt me-1"></i>30 giorni
+                                            </span>
+                                        {% elif reminder_type == '7d' %}
+                                            <span class="badge bg-warning">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>7 giorni
+                                            </span>
+                                        {% elif reminder_type == '2d' %}
+                                            <span class="badge bg-danger">
+                                                <i class="fas fa-exclamation-circle me-1"></i>2 giorni
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ data.total }}</td>
+                                    <td>
+                                        <span class="text-success fw-bold">
+                                            <i class="fas fa-check-circle me-1"></i>{{ data.successful }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="text-danger fw-bold">
+                                            <i class="fas fa-times-circle me-1"></i>{{ data.total - data.successful }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% set success_rate = ((data.successful / data.total) * 100) if data.total > 0 else 0 %}
+                                        <div class="progress" style="height: 25px;">
+                                            <div class="progress-bar 
+                                                {% if success_rate >= 90 %}bg-success
+                                                {% elif success_rate >= 70 %}bg-warning
+                                                {% else %}bg-danger{% endif %}" 
+                                                role="progressbar" 
+                                                style="width: {{ success_rate }}%"
+                                                aria-valuenow="{{ success_rate }}" aria-valuemin="0" aria-valuemax="100">
+                                                {{ "%.1f"|format(success_rate) }}%
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-chart-bar fa-3x text-muted mb-3"></i>
+                        <h5 class="text-muted">Nessuna statistica disponibile</h5>
+                        <p class="text-muted">Avvia una campagna per vedere le statistiche.</p>
+                        <a href="{{ url_for('index') }}" class="btn btn-primary mt-3">
+                            <i class="fas fa-arrow-left me-2"></i>
+                            Torna alla Dashboard
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-info-circle me-2"></i>
+                    Riepilogo Generale
+                </h5>
+            </div>
+            <div class="card-body d-flex flex-column">
+                {% set total_emails = (stats.get('30d', {}).get('total', 0) + stats.get('7d', {}).get('total', 0) + stats.get('2d', {}).get('total', 0)) %}
+                {% set total_successful = (stats.get('30d', {}).get('successful', 0) + stats.get('7d', {}).get('successful', 0) + stats.get('2d', {}).get('successful', 0)) %}
+                {% set total_errors = total_emails - total_successful %}
+                
+                <div class="mb-4">
+                    <h6 class="text-secondary">Totale Email Inviate</h6>
+                    <h2 class="text-primary-custom fw-bold">{{ total_emails }}</h2>
+                </div>
+                
+                <div class="mb-4">
+                    <h6 class="text-secondary">Email Consegnate</h6>
+                    <h3 class="text-success fw-bold">
+                        <i class="fas fa-check-circle me-2"></i>{{ total_successful }}
+                    </h3>
+                </div>
+                
+                <div class="mb-4">
+                    <h6 class="text-secondary">Email con Errori</h6>
+                    <h3 class="text-danger fw-bold">
+                        <i class="fas fa-times-circle me-2"></i>{{ total_errors }}
+                    </h3>
+                </div>
+                
+                <div class="mb-4">
+                    <h6 class="text-secondary">Tasso di Successo Globale</h6>
+                    {% set global_success_rate = ((total_successful / total_emails) * 100) if total_emails > 0 else 0 %}
+                    <div class="progress" style="height: 30px;">
+                        <div class="progress-bar 
+                            {% if global_success_rate >= 90 %}bg-success
+                            {% elif global_success_rate >= 70 %}bg-warning
+                            {% else %}bg-danger{% endif %}" 
+                            role="progressbar" 
+                            style="width: {{ global_success_rate }}%"
+                            aria-valuenow="{{ global_success_rate }}" aria-valuemin="0" aria-valuemax="100">
+                            {{ "%.1f"|format(global_success_rate) }}%
+                        </div>
+                    </div>
+                </div>
+                
+                <hr class="my-4">
+                
+                <div class="text-center mt-auto">
+                    <a href="{{ url_for('index') }}" class="btn btn-primary">
+                        <i class="fas fa-arrow-left me-2"></i>
+                        Torna alla Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Grafici visuali -->
+<div class="row mt-5 mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-chart-line me-2"></i>
+                    Visualizzazione Dati Campagna
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if stats %}
+                    <canvas id="statsChart" class="w-100" height="400"></canvas>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-chart-line fa-3x text-muted mb-3"></i>
+                        <h5 class="text-muted">Nessun dato grafico disponibile</h5>
+                        <p class="text-muted">Carica un CSV e avvia una campagna per visualizzare i grafici.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const ctx = document.getElementById('statsChart');
+
+    // Solo se il canvas esiste e ci sono dati per il grafico
+    {% if stats %}
+        if (ctx) {
+            const statsChart = new Chart(ctx, {
+                type: 'bar', // Tipo di grafico a barre
+                data: {
+                    labels: [
+                        {% for reminder_type in ['30d', '7d', '2d'] %}
+                            {% if stats.get(reminder_type) %}
+                                '{{ reminder_type.replace("d", " giorni") }}',
+                            {% endif %}
+                        {% endfor %}
+                    ],
+                    datasets: [
+                        {
+                            label: 'Email Inviate',
+                            data: [
+                                {% for reminder_type in ['30d', '7d', '2d'] %}
+                                    {% if stats.get(reminder_type) %}
+                                        {{ stats[reminder_type].total }},
+                                    {% endif %}
+                                {% endfor %}
+                            ],
+                            backgroundColor: 'rgba(52, 152, 219, 0.8)', // accent-color con opacità
+                            borderColor: 'rgba(52, 152, 219, 1)',
+                            borderWidth: 1,
+                            borderRadius: 5 // Bordi arrotondati per le barre
+                        },
+                        {
+                            label: 'Email Consegnate',
+                            data: [
+                                {% for reminder_type in ['30d', '7d', '2d'] %}
+                                    {% if stats.get(reminder_type) %}
+                                        {{ stats[reminder_type].successful }},
+                                    {% endif %}
+                                {% endfor %}
+                            ],
+                            backgroundColor: 'rgba(40, 167, 69, 0.8)', // Success color con opacità
+                            borderColor: 'rgba(40, 167, 69, 1)',
+                            borderWidth: 1,
+                            borderRadius: 5
+                        },
+                        {
+                            label: 'Email con Errori',
+                            data: [
+                                {% for reminder_type in ['30d', '7d', '2d'] %}
+                                    {% if stats.get(reminder_type) %}
+                                        {{ stats[reminder_type].total - stats[reminder_type].successful }},
+                                    {% endif %}
+                                {% endfor %}
+                            ],
+                            backgroundColor: 'rgba(220, 53, 69, 0.8)', // Danger color con opacità
+                            borderColor: 'rgba(220, 53, 69, 1)',
+                            borderWidth: 1,
+                            borderRadius: 5
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Permette di controllare meglio le dimensioni
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Statistiche Email per Tipo Reminder',
+                            font: {
+                                size: 18,
+                                weight: 'bold'
+                            },
+                            color: '#34495e' // Secondary color
+                        },
+                        legend: {
+                            position: 'bottom', // Legenda in basso
+                            labels: {
+                                font: {
+                                    size: 14
+                                },
+                                color: '#212529'
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.7)',
+                            bodyFontColor: '#fff',
+                            titleFontColor: '#fff'
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false // Rimuove le griglie verticali
+                            },
+                            ticks: {
+                                font: {
+                                    size: 12
+                                },
+                                color: '#495057'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1,
+                                font: {
+                                    size: 12
+                                },
+                                color: '#495057'
+                            },
+                            grid: {
+                                color: '#e0e0e0' // Colore griglia orizzontale
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    {% endif %}
+});
+
+console.log('Statistiche JavaScript caricato correttamente');
+</script>
+{% endblock %}
